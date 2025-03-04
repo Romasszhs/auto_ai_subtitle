@@ -103,7 +103,7 @@ class TranslationWorker:
         self.progress_bar = progress_bar
         self.worker_id = worker_id
         self.total_workers = total_workers
-
+    # 在TranslationWorker类中修改任务分配逻辑
     def process_tasks(self):
         # 只处理worker_id对应的模块的字幕块
         for block in self.blocks_to_translate:
@@ -131,15 +131,17 @@ class TranslationWorker:
             if line.strip() and not re.match(r"\d{2}:\d{2}:\d{2},\d{3}\s-->\s\d{2}:\d{2}:\d{2},\d{3}", line.strip()):
                 # 为每行添加唯一标识符，翻译后再移除
                 unique_id = f"[ID_{block_index}_{i}]"
-                text_to_translate = f"{unique_id}{line.strip()}"
+                unique_id_lowercase = f"[id_{block_index}_{i}]"
+                # 增加处理的线程id作为debugger过程中
+                text_to_translate = f"Thread-{self.worker_id}{unique_id}{line.strip()}"
                 print(f"\nThread-{self.worker_id} translating:")
                 print(f"  Text with ID: {text_to_translate}")
                 
                 translated_text = self.translator.translate(text_to_translate)
                 print(f"  Translated result: {translated_text}")
                 
-                # 移除唯一标识符
-                translated_text = translated_text.replace(unique_id, "").strip()
+                # 移除唯一标识符,确保小写的id也会被替换
+                translated_text = translated_text.replace(unique_id, "").replace(unique_id_lowercase,"").strip()
                 translated_content.append(f"{translated_text}\n")
             else:
                 translated_content.append(line)
@@ -204,6 +206,6 @@ def do_translate(file1, file2, form, to, thread_nums):
     translate_file(file1, file2, thread_nums, translator)
 
 if __name__ == '__main__':
-    do_translate(r'C:\Users\35720\Downloads\auto_ai_subtitle\script\测试的日文字幕.srt', 
-                r'C:\Users\35720\Downloads\auto_ai_subtitle\script\测试的日文字幕-zh.srt', 
+    do_translate(r'C:\Users\35720\Documents\trae-project\auto_ai_subtitle\script\测试的日文字幕.srt', 
+                r'C:\Users\35720\Documents\trae-project\auto_ai_subtitle\script\测试的日文字幕-zh.srt', 
                 'ja', 'zh', 10)

@@ -7,7 +7,7 @@ srt_path: C:\迅雷下载\SSIS-152\SSIS-152-C-bywisper.srt
 #生成的翻译后的字幕文件
 srt_translate_path: C:\迅雷下载\SSIS-152\SSIS-152-C-bywisper-zh.srt
 #翻译时开启多少线程
-translate_threads: 10
+translate_threads: 9
 #翻译源语言
 from: ja
 #翻译目标语言
