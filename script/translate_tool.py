@@ -1,142 +1,209 @@
-from translate import Translator
+from deep_translator import GoogleTranslator
 import re
 import threading
+import time
+from tqdm import tqdm
+from queue import Queue, Empty
+from threading import Lock
+from collections import OrderedDict
 
+# Language code mapping
+LANGUAGE_CODE_MAP = {
+    'ja': 'ja',      # Japanese
+    'zh': 'zh-CN',   # Simplified Chinese
+    'ko': 'ko',      # Korean
+    'en': 'en'       # English
+}
 
-def __translate(translator, text, n):
-    """
-    翻译单行文本
-    :param translator: 翻译器实例
-    :param text: 待翻译文本
-    :param n: 行号
-    :return: 翻译后的文本
-    """
-    if text == "" or text == '\n':
-        return text
+class SubtitleBlock:
+    def __init__(self):
+        self.index = ""
+        self.timestamp = ""
+        self.content = []
+        self.blank_line = ""
 
-    text = text.rstrip('\n')
-    # 如果是纯数字行(字幕序号),直接返回
-    if re.match(r"^[0-9]+$", text):
-        return add_newline_if_missing(text)
+    def is_complete(self):
+        return self.index and self.timestamp and self.content
 
-    # 如果是时间轴行,直接返回
-    if re.match(r"\d{2}:\d{2}:\d{2},\d{3}\s-->\s\d{2}:\d{2}:\d{2},\d{3}", text):
-        return add_newline_if_missing(text)
+    def __str__(self):
+        return f"{self.index}{self.timestamp}{''.join(self.content)}{self.blank_line}"
 
-    # 翻译字幕内容
-    return add_newline_if_missing(translator.translate(text))
+    def needs_translation(self):
+        # 检查是否需要翻译（非空且不是时间戳）
+        return any(line.strip() and not re.match(r"\d{2}:\d{2}:\d{2},\d{3}\s-->\s\d{2}:\d{2}:\d{2},\d{3}", line.strip()) for line in self.content)
 
+def parse_subtitle_blocks(lines):
+    blocks = []
+    current_block = SubtitleBlock()
+    
+    for line in lines:
+        if re.match(r"^\d+$", line.strip()):  # Index line
+            if current_block.is_complete():
+                blocks.append(current_block)
+                current_block = SubtitleBlock()
+            current_block.index = line
+        elif re.match(r"\d{2}:\d{2}:\d{2},\d{3}\s-->\s\d{2}:\d{2}:\d{2},\d{3}", line.strip()):  # Timestamp
+            current_block.timestamp = line
+        elif line.strip() == "":  # Blank line
+            current_block.blank_line = line
+        else:  # Content line
+            current_block.content.append(line)
+    
+    if current_block.is_complete():
+        blocks.append(current_block)
+    
+    return blocks
 
-def add_newline_if_missing(s):
-    """
-    确保字符串以换行符结尾
-    :param s: 输入字符串
-    :return: 确保以换行符结尾的字符串
-    """
-    if not s.endswith('\n'):
-        s += '\n'
-    return s
+class Translator:
+    def __init__(self, from_lang='ja', to_lang='zh'):
+        # Map language codes to supported format
+        source_lang = LANGUAGE_CODE_MAP.get(from_lang, from_lang)
+        target_lang = LANGUAGE_CODE_MAP.get(to_lang, to_lang)
+        self.translator = GoogleTranslator(source=source_lang, target=target_lang)
+        self.max_retries = 3
+        self.retry_delay = 2  # 重试延迟秒数
 
+    def translate(self, text):
+        retries = 0
+        while retries < self.max_retries:
+            try:
+                return self.translator.translate(text)
+            except Exception as e:
+                retries += 1
+                if retries == self.max_retries:
+                    print(f"\nTranslation error after {retries} retries: {str(e)}")
+                    return text  # 返回原文
+                print(f"\nRetrying translation ({retries}/{self.max_retries})...")
+                time.sleep(self.retry_delay)
 
-def translate_task(lines, translator_fun, result_map, i, translator):
-    """
-    单个翻译线程的任务函数
-    :param lines: 待翻译的文本行列表
-    :param translator_fun: 翻译函数
-    :param result_map: 存储翻译结果的字典
-    :param i: 线程ID
-    :param translator: 翻译器实例
-    """
-    print("thread id: ", i, "lines num: ", len(lines))
-    result_map[i] = [translator_fun(translator, line, n) for n, line in enumerate(lines)]
+def translate_block(translator, block):
+    """翻译字幕块的内容，保持结构不变"""
+    translated_block = SubtitleBlock()
+    translated_block.index = block.index
+    translated_block.timestamp = block.timestamp
+    translated_block.blank_line = block.blank_line
+    
+    translated_content = []
+    for line in block.content:
+        if line.strip() and not re.match(r"\d{2}:\d{2}:\d{2},\d{3}\s-->\s\d{2}:\d{2}:\d{2},\d{3}", line.strip()):
+            translated_line = translator.translate(line.rstrip('\n'))
+            translated_content.append(f"{translated_line}\n")
+        else:
+            translated_content.append(line)
+    
+    translated_block.content = translated_content
+    return translated_block
 
+class TranslationWorker:
+    def __init__(self, blocks_to_translate, result_dict, lock, translator, progress_bar, worker_id, total_workers):
+        self.blocks_to_translate = blocks_to_translate
+        self.result_dict = result_dict
+        self.lock = lock
+        self.translator = translator
+        self.progress_bar = progress_bar
+        self.worker_id = worker_id
+        self.total_workers = total_workers
 
-def translate_file(translator_fun, file1, file2, thread_nums, translator=None):
-    """
-    翻译整个文件
-    :param translator_fun: 翻译函数
-    :param file1: 源文件路径
-    :param file2: 目标文件路径
-    :param thread_nums: 线程数
-    :param translator: 翻译器实例
-    """
-    with open(file1, 'r', encoding='utf-8') as f1, open(file2, 'w', encoding='utf-8') as f2:
-        lines = f1.readlines()
-        print("translate file total lines: ", len(lines))
-        result = get_translate_result(lines, thread_nums, translator, translator_fun)
-        f2.writelines(result)
-        print("\ntranslate write file done")
+    def process_tasks(self):
+        # 只处理worker_id对应的模块的字幕块
+        for block in self.blocks_to_translate:
+            block_index = int(block.index.strip())
+            if block_index % self.total_workers == self.worker_id:
+                print(f"\n{'='*20} Thread-{self.worker_id} Processing Block {block_index} {'='*20}")
+                print(f"Original content:")
+                for line in block.content:
+                    print(f"  {line.strip()}")
+                # 为每个翻译请求添加唯一标识
+                translated_block = self.translate_block_with_unique_id(block, block_index)
+                with self.lock:
+                    self.result_dict[block_index] = translated_block
+                    self.progress_bar.update(1)
 
+    def translate_block_with_unique_id(self, block, block_index):
+        """使用唯一标识符翻译字幕块"""
+        translated_block = SubtitleBlock()
+        translated_block.index = block.index
+        translated_block.timestamp = block.timestamp
+        translated_block.blank_line = block.blank_line
+        
+        translated_content = []
+        for i, line in enumerate(block.content):
+            if line.strip() and not re.match(r"\d{2}:\d{2}:\d{2},\d{3}\s-->\s\d{2}:\d{2}:\d{2},\d{3}", line.strip()):
+                # 为每行添加唯一标识符，翻译后再移除
+                unique_id = f"[ID_{block_index}_{i}]"
+                text_to_translate = f"{unique_id}{line.strip()}"
+                print(f"\nThread-{self.worker_id} translating:")
+                print(f"  Text with ID: {text_to_translate}")
+                
+                translated_text = self.translator.translate(text_to_translate)
+                print(f"  Translated result: {translated_text}")
+                
+                # 移除唯一标识符
+                translated_text = translated_text.replace(unique_id, "").strip()
+                translated_content.append(f"{translated_text}\n")
+            else:
+                translated_content.append(line)
+        
+        translated_block.content = translated_content
+        return translated_block
 
-def get_translate_result(lines, thread_nums, translator, translator_fun):
-    """
-    获取多线程翻译结果
-    :param lines: 待翻译的文本行列表
-    :param thread_nums: 线程数
-    :param translator: 翻译器实例
-    :param translator_fun: 翻译函数
-    :return: 合并后的翻译结果列表
-    """
-    result_map = get_translate_threads_result(lines, thread_nums, translator, translator_fun)
-    result = []
-    for key in sorted(result_map):
-        result.extend(result_map.get(key))
-    return result
-
-
-def get_translate_threads_result(lines, thread_nums, translator, translator_fun):
-    """
-    启动多线程进行翻译并获取结果
-    :param lines: 待翻译的文本行列表
-    :param thread_nums: 线程数
-    :param translator: 翻译器实例
-    :param translator_fun: 翻译函数
-    :return: 包含各线程翻译结果的字典
-    """
-    result_map = {}
-    threads = []
-    n = len(lines) // thread_nums
-    for i in range(1, thread_nums + 1):
-        threads.append(
-            threading.Thread(target=translate_task, args=(
-                get_split_lines(i, lines, n, thread_nums), translator_fun, result_map, i, translator)))
-    for thread in threads:
+def translate_blocks_parallel(blocks, thread_nums, translator):
+    # 筛选需要翻译的字幕块
+    blocks_to_translate = [block for block in blocks if block.needs_translation()]
+    
+    # 创建线程安全的结果字典
+    result_dict = OrderedDict()
+    lock = Lock()
+    
+    # 创建进度条
+    progress_bar = tqdm(total=len(blocks_to_translate), desc="Translating", unit="blocks")
+    
+    # 创建工作线程
+    workers = []
+    for i in range(thread_nums):
+        worker = TranslationWorker(blocks_to_translate, result_dict, lock, translator, progress_bar, i, thread_nums)
+        thread = threading.Thread(target=worker.process_tasks)
+        workers.append(thread)
         thread.start()
-    for thread in threads:
-        thread.join()
-    return result_map
+    
+    # 等待所有线程完成
+    for worker in workers:
+        worker.join()
+    
+    progress_bar.close()
+    
+    # 按原始顺序重建结果
+    final_blocks = []
+    for block in blocks:
+        block_index = int(block.index.strip())
+        if block_index in result_dict:
+            final_blocks.append(result_dict[block_index])
+        else:
+            final_blocks.append(block)
+    
+    return final_blocks
 
-
-def get_split_lines(i, lines, n, thread_nums):
-    """
-    获取当前线程需要处理的文本行
-    :param i: 线程ID
-    :param lines: 所有文本行
-    :param n: 每个线程处理的行数
-    :param thread_nums: 总线程数
-    :return: 当前线程需要处理的文本行列表
-    """
-    if n * i <= len(lines):
-        split_line = lines[(i - 1) * n:i * n]
-    else:
-        split_line = lines[(i - 1) * n:]
-    if i == thread_nums and n * i < len(lines):
-        split_line = lines[(i - 1) * n:]
-    return split_line
-
+def translate_file(file1, file2, thread_nums, translator):
+    with open(file1, 'r', encoding='utf-8') as f1:
+        lines = f1.readlines()
+        print("Parsing subtitle blocks...")
+        blocks = parse_subtitle_blocks(lines)
+        print(f"Found {len(blocks)} subtitle blocks")
+        
+        translated_blocks = translate_blocks_parallel(blocks, thread_nums, translator)
+        
+        print("\nWriting translated subtitles...")
+        with open(file2, 'w', encoding='utf-8') as f2:
+            for block in translated_blocks:
+                f2.write(str(block))
+        print("Translation completed")
 
 def do_translate(file1, file2, form, to, thread_nums):
-    """
-    执行文件翻译的主函数
-    :param file1: 源文件路径
-    :param file2: 目标文件路径
-    :param form: 源语言
-    :param to: 目标语言
-    :param thread_nums: 线程数
-    """
+    # 创建单一的翻译器实例
     translator = Translator(from_lang=form, to_lang=to)
-    translate_file(__translate, file1, file2, thread_nums, translator)
-
+    translate_file(file1, file2, thread_nums, translator)
 
 if __name__ == '__main__':
-    do_translate('test.srt', 'test1.srt', 'ja', 'zh')
+    do_translate(r'C:\Users\35720\Downloads\auto_ai_subtitle\script\测试的日文字幕.srt', 
+                r'C:\Users\35720\Downloads\auto_ai_subtitle\script\测试的日文字幕-zh.srt', 
+                'ja', 'zh', 10)

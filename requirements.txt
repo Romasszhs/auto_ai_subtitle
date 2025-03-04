@@ -3,3 +3,4 @@ openai-whisper
 ffmpeg-python
 torch
 tqdm>=4.65.0
+deep-translator>=1.11.4
