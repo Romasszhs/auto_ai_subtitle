@@ -1,5 +1,5 @@
-translate
 pyyaml
 openai-whisper
 ffmpeg-python
 torch
+tqdm>=4.65.0

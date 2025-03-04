@@ -15,9 +15,9 @@ if __name__ == '__main__':
                             config['device'])
     print("whisper success")
 
-    print("translate begin")
-    translate_tool.do_translate(config['srt_path'], config['srt_translate_path'], config['from'], config['to'],
-                                config['translate_threads'])
-    print("translate success")
+    # print("translate begin")
+    # translate_tool.do_translate(config['srt_path'], config['srt_translate_path'], config['from'], config['to'],
+    #                             config['translate_threads'])
+    # print("translate success")
 
     print("success")

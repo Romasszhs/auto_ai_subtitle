@@ -1,6 +1,9 @@
 import re
 import torch
 import whisper
+import sys
+import time
+from tqdm import tqdm
 
 
 def reformat_time(second):
@@ -61,16 +64,34 @@ def load_model_bin(model_path, device):
 
 
 def do_whisper(audio, srt_path, language, hf_model_path, device):
+    print("Loading model...")
     if hf_model_path == "":
         model = whisper.load_model("base")
     else:
         model = load_model_bin(hf_model_path, device)
-    print("whisper working...")
-    result = model.transcribe(audio, language=language)
-    print("whisper execute success")
-    print("writing srt file...")
-    write_srt(result['segments'], srt_path)
-    print("write srt success")
+    
+    print("Starting transcription...")
+    try:
+        # 使用 tqdm 显示进度条
+        with tqdm(total=100, desc="Transcribing", unit="%") as pbar:
+            # 配置转录选项
+            options = {
+                "language": language,
+                "task": "transcribe",
+                "fp16": False,  # 强制使用 FP32
+                "verbose": False
+            }
+            
+            result = model.transcribe(audio, **options)
+            pbar.update(100)  # 完成时更新到100%
+        
+        print("\nWriting SRT file...")
+        write_srt(result['segments'], srt_path)
+        print("Transcription completed successfully!")
+        
+    except Exception as e:
+        print(f"\nError during transcription: {str(e)}")
+        raise
 
 
 if __name__ == '__main__':

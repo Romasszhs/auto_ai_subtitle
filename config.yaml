@@ -1,11 +1,11 @@
 #输入的视频文件
-input: D:\download\ChainsawMan-03.mp4
+input: C:\迅雷下载\SSIS-152\hhd800.com@SSIS-152.mp4
 #中间过程会生成的音频文件
-output: D:\download\ChainsawMan-03.mp3
+output: C:\迅雷下载\SSIS-152\hhd800.com@SSIS-152.mp3
 #生成的原始字幕文件
-srt_path: D:\download\ChainsawMan-03.srt
+srt_path: C:\迅雷下载\SSIS-152\SSIS-152-C-bywisper.srt
 #生成的翻译后的字幕文件
-srt_translate_path: D:\download\ChainsawMan-03-zh.srt
+srt_translate_path: C:\迅雷下载\SSIS-152\SSIS-152-C-bywisper-zh.srt
 #翻译时开启多少线程
 translate_threads: 10
 #翻译源语言
